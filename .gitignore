@@ -5,3 +5,6 @@ dist/game.pdb
 dist/SDL2.dll
 dist/game
 dist/game.exe
+
+.clangd/
+.vscode/
