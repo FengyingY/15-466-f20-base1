@@ -5,6 +5,7 @@
 //for the GL_ERRORS() macro:
 #include "data_path.hpp"
 #include "gl_errors.hpp"
+#include "png.h"
 
 //for glm::value_ptr() :
 #include <array>
@@ -15,6 +16,9 @@
 #include <map>
 #include <dirent.h>	
 #include <fstream>
+
+#define ENEMY_SPRITE_OFFSET 7
+#define BULLET_SPRITE_OFFSET 22
 
 std::array< PPU466::Palette, 8 > palette_table;
 std::array< PPU466::Tile, 16 * 16 > tile_table;
@@ -28,7 +32,7 @@ struct Level {
 	int player_x, player_y;
 	int basement_x, basement_y;
 	std::vector<std::pair<int, int> >walls;
-	std::vector<std::pair<int, int> >enermies;
+	std::vector<std::pair<int, int> >enemies;
 };
 
 std::vector<Level>level_table;
@@ -147,7 +151,7 @@ Load<void> levels(LoadTagDefault, []() -> void {
 						} else if (line[i] == 'w') {
 							level.walls.push_back(std::pair<int, int>(i, row));
 						} else if (line[i] == 'e') {
-							level.enermies.push_back(std::pair<int, int>(i, row));
+							level.enemies.push_back(std::pair<int, int>(i, row));
 						}
 					}
 					row++;
@@ -159,15 +163,6 @@ Load<void> levels(LoadTagDefault, []() -> void {
 });
 
 PlayMode::PlayMode() {
-	//TODO:
-	// you *must* use an asset pipeline of some sort to generate tiles.
-	// don't hardcode them like this!
-	// or, at least, if you do hardcode them like this,
-	//  make yourself a script that spits out the code that you paste in here
-	//   and check that script into your repository.
-
-	//Also, *don't* use these tiles in your game:
-
 	ppu.tile_table = tile_table;
 	ppu.palette_table = palette_table;
 
@@ -176,11 +171,10 @@ PlayMode::PlayMode() {
 
 	// load level 0
 	// 1. set player to sprites[0]
-	ppu.sprites[0].index = name_to_index["player"] * 4 + 1;
+	ppu.sprites[0].index = name_to_index["player"] * 4;
 	ppu.sprites[0].attributes = name_to_index["player"];
 	ppu.sprites[0].x = level_table[0].player_x * tile_offset;
 	ppu.sprites[0].y = level_table[0].player_y * tile_offset + y_offset;
-	printf("player at (%d, %d)\n", ppu.sprites[0].x, ppu.sprites[0].y);
 
 	// 2. set basement to sprites[1]
 	ppu.sprites[1].index = name_to_index["basement"] * 4;
@@ -188,36 +182,38 @@ PlayMode::PlayMode() {
 	ppu.sprites[1].x = level_table[0].basement_x * tile_offset;
 	ppu.sprites[1].y = level_table[0].basement_y * tile_offset + y_offset;
 
-	printf("basement at (%d, %d)\n", ppu.sprites[1].x, ppu.sprites[1].y);
-
-	// 3. enermies [2-15]
-	printf("name_to_index=%lu\n", name_to_index["enermy"]);
+	// 3. walls [2-6] -> only the walls around basement is destroyable 
 	size_t index = 2;
-	for (std::vector<std::pair<int, int> >::iterator it = level_table[0].enermies.begin(); 
-		 it != level_table[0].enermies.end(); it++) {
-			ppu.sprites[index].index = name_to_index["enermy"] * 4;
-			ppu.sprites[index].attributes = name_to_index["enermy"];
-			ppu.sprites[index].x = it->first * tile_offset;
-			ppu.sprites[index].y = it->second * tile_offset + y_offset;
-
-			printf("enermies at (%d, %d) attr=%d\n", ppu.sprites[index].x, ppu.sprites[index].y, ppu.sprites[index].attributes);
-
-			index++;
-		}
-
-	// tile_offset. walls [16-63]
-	index = 16;
 	for (std::vector<std::pair<int, int> >::iterator it = level_table[0].walls.begin(); 
-		 it != level_table[0].walls.end(); it++) {
+		 it != level_table[0].walls.end(); ++it) {
 			ppu.sprites[index].index = name_to_index["wall"] * 4;
 			ppu.sprites[index].attributes = name_to_index["wall"];
 			ppu.sprites[index].x = it->first * tile_offset;
 			ppu.sprites[index].y = it->second * tile_offset + y_offset;
 
-			printf("walls at (%d, %d)\n", ppu.sprites[index].x, ppu.sprites[index].y);
-
 			index++;
 		}
+
+
+	// 4. enemies [7-21]
+	for (index = ENEMY_SPRITE_OFFSET; index < 22; ++index) {
+		ppu.sprites[index].index = name_to_index["enemy"] * 4;
+		ppu.sprites[index].attributes = name_to_index["enemy"];
+	}
+	for (std::vector<std::pair<int, int> >::iterator it = level_table[0].enemies.begin(); 
+		 it != level_table[0].enemies.end(); ++it) {
+			enemy_at.push_back(glm::vec2(it->first * tile_offset, it->second * tile_offset));
+	}
+
+
+	// 5. bullets [22-63] -> initially all of them are out of screen
+	for (index = BULLET_SPRITE_OFFSET; index < 64; ++index) {
+		ppu.sprites[index].attributes = name_to_index["bullet"];
+		Bullet bullet;
+		bullet.pos = glm::vec2(255, 255);
+		bullet.direction = glm::vec2(0, 0);
+		bullets.push_back(bullet);
+	}
 }
 
 PlayMode::~PlayMode() {
@@ -242,6 +238,10 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 			down.downs += 1;
 			down.pressed = true;
 			return true;
+		} else if (evt.key.keysym.sym == SDLK_SPACE) {
+			space.downs += 1;
+			space.pressed = true;
+			return true;
 		}
 	} else if (evt.type == SDL_KEYUP) {
 		if (evt.key.keysym.sym == SDLK_LEFT) {
@@ -256,54 +256,179 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 		} else if (evt.key.keysym.sym == SDLK_DOWN) {
 			down.pressed = false;
 			return true;
+		} else if (evt.key.keysym.sym == SDLK_SPACE) {
+			space.pressed = false;
+			return true;
 		}
 	}
 
 	return false;
 }
 
-void PlayMode::update(float elapsed) {
+// decide if the given sprite collides with something else
+int check_collision(glm::vec2 sprite, size_t sprite_index, std::array<PPU466::Sprite, 64> *sprites, int width) {
+	for (size_t i = 0; i < BULLET_SPRITE_OFFSET; i++ ) {
+		if (sprite_index != 0) {
+			//printf("sprite: (%d, %d) b: (%.1f, %.1f)\t", (*sprites)[i].x, (*sprites)[i].y, sprite.x, sprite.y);
+			//printf("%d %d %d %d\n", (sprite.x-width) < (*sprites)[i].x , ((*sprites)[i].x) < (sprite.x+width), (sprite.y-width) < (*sprites)[i].y, (*sprites)[i].y < (sprite.y+width));
+		}
+		if (i != sprite_index &&
+			sprite.x < (*sprites)[i].x + width && 
+			((*sprites)[i].x) < (sprite.x + width) && 
+			sprite.y < (*sprites)[i].y + width && 
+			(*sprites)[i].y < (sprite.y + width)) {
+				if (sprite.x != (*sprites)[i].x && sprite.y != (*sprites)[i].y) // not the same sprite
+					return i;
+			}
+	}
+	return -1;
+}
 
-	//slowly rotates through [0,1):
-	// (will be used to set background color)
-	background_fade += elapsed / 10.0f;
-	background_fade -= std::floor(background_fade);
+// return game_over
+bool hit_by_bullet(int collision_index, glm::vec2 &player_at, 
+				   std::array<PPU466::Sprite, 64> &sprites, 
+				   std::vector<glm::vec2>&enemy_at) {
+	if (collision_index == 0) { // player -> reset to 0, 0
+		//player_at.x = 0;
+		//player_at.y = 0;
+		return false;
+	} else if (collision_index == 1) {
+		// basement is destroyed
+		return true;
+	}
+	else { // enemies or wall, remove from screen
+		if (collision_index < ENEMY_SPRITE_OFFSET) { // wall
+			sprites[collision_index].x = 255;
+			sprites[collision_index].y = 255;
+		} else { // enemies
+			enemy_at[collision_index-ENEMY_SPRITE_OFFSET].x = 255;
+			enemy_at[collision_index-ENEMY_SPRITE_OFFSET].y = 255;
+		}
+		return false;
+	}
+}
+
+void PlayMode::update(float elapsed) {
 
 	constexpr float PlayerSpeed = 30.0f;
 	if (left.pressed) {
 		player_at.x -= PlayerSpeed * elapsed;
+		player_direction.x = -1;
+		player_direction.y = 0;
 		ppu.sprites[0].index = name_to_index["player"] + 3;
 	} 
-	if (right.pressed) {
+	else if (right.pressed) {
 		player_at.x += PlayerSpeed * elapsed;
+		player_direction.x = 1;
+		player_direction.y = 0;
 		ppu.sprites[0].index = name_to_index["player"] + 1;
 	}
-	if (down.pressed) {
+	else if (down.pressed) {
 		player_at.y -= PlayerSpeed * elapsed;
+		player_direction.x = 0;
+		player_direction.y = -1;
 		ppu.sprites[0].index = name_to_index["player"] + 2;
 	}
-	if (up.pressed) {
+	else if (up.pressed) {
 		player_at.y += PlayerSpeed * elapsed;
+		player_direction.x = 0;
+		player_direction.y = 1;
 		ppu.sprites[0].index = name_to_index["player"];
 	}
+
+	// bounding to screen
+	player_at.x = std::fmax(0, player_at.x);
+	player_at.x = std::fmin(player_at.x, 255-8);
+	player_at.y = std::fmax(0, player_at.y);
+	player_at.y = std::fmin(player_at.y, 255-8);
+
+	// if the player collide with other sprites, reset it's position to avoid collision
+	int collision_index = check_collision(player_at, 0, &ppu.sprites, 8);
+	if (collision_index > 0) {
+		uint8_t sp_x = ppu.sprites[collision_index].x;
+		uint8_t sp_y = ppu.sprites[collision_index].y;
+		if (player_direction.x == 0) {
+			// if player is going up, ignore the sprite overlap at the bottom
+			if (!(player_direction.y == 1 && sp_y < player_at.y) && 
+				!(player_direction.y == -1 && sp_y > player_at.y)) {
+				int diff = 8 - std::abs(player_at.y - sp_y);
+				player_at.y -= player_direction.y * diff;
+			}
+				
+		} else {
+			if (!(player_direction.x == 1 && sp_x < player_at.x) && 
+				!(player_direction.x == -1 && sp_x > player_at.x)) {
+				int diff = 8 - std::abs(player_at.x - sp_x);
+				player_at.x -= player_direction.x * diff;
+			}
+		}
+	}
+
+	// emit a bullet when space is pressed
+	if (space.pressed) {
+		// 1. find the next available bullet sprite
+		size_t index;
+		for (index = 0; index < bullets.size(); ++index) {
+			if (bullets[index].direction.x == 0 && bullets[index].direction.y == 0) {
+				break;
+			}
+		}
+		// 2. emit the bullet
+		bullets[index].direction.x = player_direction.x;
+		bullets[index].direction.y = player_direction.y;
+		if (player_direction.x == 0) {
+			if (player_direction.y == 1) // up
+				ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4;
+			else // down
+				ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 2;
+		} else if (player_direction.x == 1) { // right
+			ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 1;
+		} else { // left
+			ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 3;
+		}
+
+		bullets[index].pos.x = player_at.x;
+		bullets[index].pos.y = player_at.y;
+		space.pressed = false;
+	}
+
+	// update bullets position
+	constexpr float BulletSpeed = 3.0f;
+	for (size_t i = 0; i < bullets.size(); ++i) {
+		if (bullets[i].direction.x != 0 || bullets[i].direction.y != 0) {
+			bullets[i].pos.x += BulletSpeed * bullets[i].direction.x;
+			bullets[i].pos.y += BulletSpeed * bullets[i].direction.y;
+			// printf("bullet (%.1f, %.1f)\n", bullets[i].pos.x, bullets[i].pos.y);
+			
+			
+			// check collision
+			glm::vec2 b(bullets[i].pos.x, bullets[i].pos.y);
+			int collision_index = check_collision(b, i, &ppu.sprites, 4);
+			if (collision_index >= 0) {
+				game_over = hit_by_bullet(collision_index, player_at, ppu.sprites, enemy_at);
+				// the bullet should be disappear
+				bullets[i].direction.x = 0;
+				bullets[i].direction.y = 0;
+				bullets[i].pos.x = 255;
+				bullets[i].pos.y = 255;
+			}
+		}
+	}
+	
 
 	//reset button press counters:
 	left.downs = 0;
 	right.downs = 0;
 	up.downs = 0;
 	down.downs = 0;
+	space.downs = 0;
 }
 
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	//--- set ppu state based on game state ---
 
 	//background color will be some hsv-like fade:
-	ppu.background_color = glm::u8vec4(
-		std::min(255,std::max(0,int32_t(255 * 0.5f * (0.5f + std::sin( 2.0f * M_PI * (background_fade + 0.0f / 3.0f) ) ) ))),
-		std::min(255,std::max(0,int32_t(255 * 0.5f * (0.5f + std::sin( 2.0f * M_PI * (background_fade + 1.0f / 3.0f) ) ) ))),
-		std::min(255,std::max(0,int32_t(255 * 0.5f * (0.5f + std::sin( 2.0f * M_PI * (background_fade + 2.0f / 3.0f) ) ) ))),
-		0xff
-	);
+	ppu.background_color = glm::u8vec4(0x00, 0x00, 0x00,0xff);
 
 	//tilemap gets recomputed every frame as some weird plasma thing:
 	//NOTE: don't do this in your game! actually make a map or something :-)
@@ -314,13 +439,30 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		}
 	}
 
-	//background scroll:
-	//ppu.background_position.x = int32_t(-0.5f * player_at.x);
-	//ppu.background_position.y = int32_t(-0.5f * player_at.y);
-
 	//player sprite:
 	ppu.sprites[0].x = int32_t(player_at.x);
 	ppu.sprites[0].y = int32_t(player_at.y);
+
+	//enemy sprites:
+	for (size_t i = 0; i < enemy_at.size(); ++i) {
+		ppu.sprites[ENEMY_SPRITE_OFFSET+i].x = enemy_at[i].x;
+		ppu.sprites[ENEMY_SPRITE_OFFSET+i].y = enemy_at[i].y;
+	}
+
+	//bullet sprites:
+	for (size_t i = 0; i < bullets.size(); ++i) {
+		// reset the out-of-sight bullets
+		if (bullets[i].pos.x < 0 || bullets[i].pos.x > 255 || 
+			bullets[i].pos.y < 0 || bullets[i].pos.y > 255) {
+			bullets[i].direction.x = 0;
+			bullets[i].direction.y = 0;
+			bullets[i].pos.x = 255;
+			bullets[i].pos.y = 255;
+		}
+
+		ppu.sprites[BULLET_SPRITE_OFFSET+i].x = bullets[i].pos.x;
+		ppu.sprites[BULLET_SPRITE_OFFSET+i].y = bullets[i].pos.y;
+	}
 
 	//--- actually draw ---
 	ppu.draw(drawable_size);

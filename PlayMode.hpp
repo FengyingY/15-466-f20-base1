@@ -21,15 +21,25 @@ struct PlayMode : Mode {
 	struct Button {
 		uint8_t downs = 0;
 		uint8_t pressed = 0;
-	} left, right, down, up;
-
-	//some weird background animation:
-	float background_fade = 0.0f;
+	} left, right, down, up, space;
 
 	//player position:
 	glm::vec2 player_at = glm::vec2(0.0f);
+	//player direction:
+	glm::vec2 player_direction = glm::vec2(0, 1);
 
 	//----- drawing handled by PPU466 -----
-
 	PPU466 ppu;
+
+	// enemies position
+	std::vector<glm::vec2>enemy_at;
+
+	// bullet position
+	struct Bullet {
+		glm::vec2 pos;
+		glm::vec2 direction;
+	};
+	std::vector<Bullet> bullets;
+
+	bool game_over = false;
 };
