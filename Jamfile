@@ -73,6 +73,7 @@ if $(OS) = NT { #Windows
 GAME_NAMES =
 	PlayMode
 	PPU466
+	data_path
 	main
 	load_save_png
 	gl_compile_program
