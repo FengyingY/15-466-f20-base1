@@ -202,7 +202,11 @@ PlayMode::PlayMode() {
 	}
 	for (std::vector<std::pair<int, int> >::iterator it = level_table[0].enemies.begin(); 
 		 it != level_table[0].enemies.end(); ++it) {
-			enemy_at.push_back(glm::vec2(it->first * tile_offset, it->second * tile_offset));
+			Tank enemy;
+			enemy.pos.x = it->first * tile_offset;
+			enemy.pos.y = it->second * tile_offset;
+			enemy.direction = glm::vec2(0, 0);
+			enemies.push_back(enemy);
 	}
 
 
@@ -266,7 +270,7 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 }
 
 // decide if the given sprite collides with something else
-int check_collision(glm::vec2 sprite, size_t sprite_index, std::array<PPU466::Sprite, 64> *sprites, int width) {
+int PlayMode::check_collision(glm::vec2 sprite, size_t sprite_index, std::array<PPU466::Sprite, 64> *sprites, int width) {
 	for (size_t i = 0; i < BULLET_SPRITE_OFFSET; i++ ) {
 		if (sprite_index != 0) {
 			//printf("sprite: (%d, %d) b: (%.1f, %.1f)\t", (*sprites)[i].x, (*sprites)[i].y, sprite.x, sprite.y);
@@ -285,12 +289,12 @@ int check_collision(glm::vec2 sprite, size_t sprite_index, std::array<PPU466::Sp
 }
 
 // return game_over
-bool hit_by_bullet(int collision_index, glm::vec2 &player_at, 
+bool PlayMode::hit_by_bullet(int collision_index, Tank &player, 
 				   std::array<PPU466::Sprite, 64> &sprites, 
-				   std::vector<glm::vec2>&enemy_at) {
+				   std::vector<Tank>&enemies) {
 	if (collision_index == 0) { // player -> reset to 0, 0
-		//player_at.x = 0;
-		//player_at.y = 0;
+		//player.pos.x = 0;
+		//player.pos.y = 0;
 		return false;
 	} else if (collision_index == 1) {
 		// basement is destroyed
@@ -301,8 +305,8 @@ bool hit_by_bullet(int collision_index, glm::vec2 &player_at,
 			sprites[collision_index].x = 255;
 			sprites[collision_index].y = 255;
 		} else { // enemies
-			enemy_at[collision_index-ENEMY_SPRITE_OFFSET].x = 255;
-			enemy_at[collision_index-ENEMY_SPRITE_OFFSET].y = 255;
+			enemies[collision_index-ENEMY_SPRITE_OFFSET].pos.x = 255;
+			enemies[collision_index-ENEMY_SPRITE_OFFSET].pos.y = 255;
 		}
 		return false;
 	}
@@ -312,54 +316,54 @@ void PlayMode::update(float elapsed) {
 
 	constexpr float PlayerSpeed = 30.0f;
 	if (left.pressed) {
-		player_at.x -= PlayerSpeed * elapsed;
-		player_direction.x = -1;
-		player_direction.y = 0;
+		player.pos.x -= PlayerSpeed * elapsed;
+		player.direction.x = -1;
+		player.direction.y = 0;
 		ppu.sprites[0].index = name_to_index["player"] + 3;
 	} 
 	else if (right.pressed) {
-		player_at.x += PlayerSpeed * elapsed;
-		player_direction.x = 1;
-		player_direction.y = 0;
+		player.pos.x += PlayerSpeed * elapsed;
+		player.direction.x = 1;
+		player.direction.y = 0;
 		ppu.sprites[0].index = name_to_index["player"] + 1;
 	}
 	else if (down.pressed) {
-		player_at.y -= PlayerSpeed * elapsed;
-		player_direction.x = 0;
-		player_direction.y = -1;
+		player.pos.y -= PlayerSpeed * elapsed;
+		player.direction.x = 0;
+		player.direction.y = -1;
 		ppu.sprites[0].index = name_to_index["player"] + 2;
 	}
 	else if (up.pressed) {
-		player_at.y += PlayerSpeed * elapsed;
-		player_direction.x = 0;
-		player_direction.y = 1;
+		player.pos.y += PlayerSpeed * elapsed;
+		player.direction.x = 0;
+		player.direction.y = 1;
 		ppu.sprites[0].index = name_to_index["player"];
 	}
 
 	// bounding to screen
-	player_at.x = std::fmax(0, player_at.x);
-	player_at.x = std::fmin(player_at.x, 255-8);
-	player_at.y = std::fmax(0, player_at.y);
-	player_at.y = std::fmin(player_at.y, 255-8);
+	player.pos.x = std::fmax(0, player.pos.x);
+	player.pos.x = std::fmin(player.pos.x, 255-8);
+	player.pos.y = std::fmax(0, player.pos.y);
+	player.pos.y = std::fmin(player.pos.y, 255-8);
 
 	// if the player collide with other sprites, reset it's position to avoid collision
-	int collision_index = check_collision(player_at, 0, &ppu.sprites, 8);
+	int collision_index = check_collision(player.pos, 0, &ppu.sprites, 8);
 	if (collision_index > 0) {
 		uint8_t sp_x = ppu.sprites[collision_index].x;
 		uint8_t sp_y = ppu.sprites[collision_index].y;
-		if (player_direction.x == 0) {
+		if (player.direction.x == 0) {
 			// if player is going up, ignore the sprite overlap at the bottom
-			if (!(player_direction.y == 1 && sp_y < player_at.y) && 
-				!(player_direction.y == -1 && sp_y > player_at.y)) {
-				int diff = 8 - std::abs(player_at.y - sp_y);
-				player_at.y -= player_direction.y * diff;
+			if (!(player.direction.y == 1 && sp_y < player.pos.y) && 
+				!(player.direction.y == -1 && sp_y > player.pos.y)) {
+				int diff = 8 - std::abs(player.pos.y - sp_y);
+				player.pos.y -= player.direction.y * diff;
 			}
 				
 		} else {
-			if (!(player_direction.x == 1 && sp_x < player_at.x) && 
-				!(player_direction.x == -1 && sp_x > player_at.x)) {
-				int diff = 8 - std::abs(player_at.x - sp_x);
-				player_at.x -= player_direction.x * diff;
+			if (!(player.direction.x == 1 && sp_x < player.pos.x) && 
+				!(player.direction.x == -1 && sp_x > player.pos.x)) {
+				int diff = 8 - std::abs(player.pos.x - sp_x);
+				player.pos.x -= player.direction.x * diff;
 			}
 		}
 	}
@@ -374,21 +378,21 @@ void PlayMode::update(float elapsed) {
 			}
 		}
 		// 2. emit the bullet
-		bullets[index].direction.x = player_direction.x;
-		bullets[index].direction.y = player_direction.y;
-		if (player_direction.x == 0) {
-			if (player_direction.y == 1) // up
+		bullets[index].direction.x = player.direction.x;
+		bullets[index].direction.y = player.direction.y;
+		if (player.direction.x == 0) {
+			if (player.direction.y == 1) // up
 				ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4;
 			else // down
 				ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 2;
-		} else if (player_direction.x == 1) { // right
+		} else if (player.direction.x == 1) { // right
 			ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 1;
 		} else { // left
 			ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 3;
 		}
 
-		bullets[index].pos.x = player_at.x;
-		bullets[index].pos.y = player_at.y;
+		bullets[index].pos.x = player.pos.x;
+		bullets[index].pos.y = player.pos.y;
 		space.pressed = false;
 	}
 
@@ -405,7 +409,7 @@ void PlayMode::update(float elapsed) {
 			glm::vec2 b(bullets[i].pos.x, bullets[i].pos.y);
 			int collision_index = check_collision(b, i, &ppu.sprites, 4);
 			if (collision_index >= 0) {
-				game_over = hit_by_bullet(collision_index, player_at, ppu.sprites, enemy_at);
+				game_over = hit_by_bullet(collision_index, player, ppu.sprites, enemies);
 				// the bullet should be disappear
 				bullets[i].direction.x = 0;
 				bullets[i].direction.y = 0;
@@ -440,13 +444,13 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	}
 
 	//player sprite:
-	ppu.sprites[0].x = int32_t(player_at.x);
-	ppu.sprites[0].y = int32_t(player_at.y);
+	ppu.sprites[0].x = int32_t(player.pos.x);
+	ppu.sprites[0].y = int32_t(player.pos.y);
 
 	//enemy sprites:
-	for (size_t i = 0; i < enemy_at.size(); ++i) {
-		ppu.sprites[ENEMY_SPRITE_OFFSET+i].x = enemy_at[i].x;
-		ppu.sprites[ENEMY_SPRITE_OFFSET+i].y = enemy_at[i].y;
+	for (size_t i = 0; i < enemies.size(); ++i) {
+		ppu.sprites[ENEMY_SPRITE_OFFSET+i].x = enemies[i].pos.x;
+		ppu.sprites[ENEMY_SPRITE_OFFSET+i].y = enemies[i].pos.y;
 	}
 
 	//bullet sprites:
