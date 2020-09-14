@@ -9,6 +9,7 @@
 
 //for glm::value_ptr() :
 #include <array>
+#include <bits/stdint-uintn.h>
 #include <glm/gtc/type_ptr.hpp>
 
 #include <random>
@@ -19,6 +20,7 @@
 
 #define ENEMY_SPRITE_OFFSET 7
 #define BULLET_SPRITE_OFFSET 22
+#define NULL_BACKGROUND_VALUE 0b0000011111111111
 
 std::array< PPU466::Palette, 8 > palette_table;
 std::array< PPU466::Tile, 16 * 16 > tile_table;
@@ -33,6 +35,7 @@ struct Level {
 	int basement_x, basement_y;
 	std::vector<std::pair<int, int> >walls;
 	std::vector<std::pair<int, int> >enemies;
+	std::vector<std::pair<int, int> >background;
 };
 
 std::vector<Level>level_table;
@@ -152,6 +155,8 @@ Load<void> levels(LoadTagDefault, []() -> void {
 							level.walls.push_back(std::pair<int, int>(i, row));
 						} else if (line[i] == 'e') {
 							level.enemies.push_back(std::pair<int, int>(i, row));
+						} else if (line[i] == 'o') {
+							level.background.push_back(std::pair<int, int>(row, i));
 						}
 					}
 					row++;
@@ -162,7 +167,7 @@ Load<void> levels(LoadTagDefault, []() -> void {
 	}
 });
 
-PlayMode::PlayMode() {
+void PlayMode::initialize_level(int level) {
 	ppu.tile_table = tile_table;
 	ppu.palette_table = palette_table;
 
@@ -171,21 +176,21 @@ PlayMode::PlayMode() {
 
 	// load level 0
 	// 1. set player to sprites[0]
-	ppu.sprites[0].index = name_to_index["player"] * 4;
-	ppu.sprites[0].attributes = name_to_index["player"];
-	ppu.sprites[0].x = level_table[0].player_x * tile_offset;
-	ppu.sprites[0].y = level_table[0].player_y * tile_offset + y_offset;
+	ppu.sprites[level].index = name_to_index["player"] * 4;
+	ppu.sprites[level].attributes = name_to_index["player"];
+	player.pos.x = level_table[level].player_x * tile_offset;
+	player.pos.y = level_table[level].player_y * tile_offset + y_offset;
 
 	// 2. set basement to sprites[1]
 	ppu.sprites[1].index = name_to_index["basement"] * 4;
 	ppu.sprites[1].attributes = name_to_index["basement"];
-	ppu.sprites[1].x = level_table[0].basement_x * tile_offset;
-	ppu.sprites[1].y = level_table[0].basement_y * tile_offset + y_offset;
+	ppu.sprites[1].x = level_table[level].basement_x * tile_offset;
+	ppu.sprites[1].y = level_table[level].basement_y * tile_offset + y_offset;
 
 	// 3. walls [2-6] -> only the walls around basement is destroyable 
 	size_t index = 2;
-	for (std::vector<std::pair<int, int> >::iterator it = level_table[0].walls.begin(); 
-		 it != level_table[0].walls.end(); ++it) {
+	for (std::vector<std::pair<int, int> >::iterator it = level_table[level].walls.begin(); 
+		 it != level_table[level].walls.end(); ++it) {
 			ppu.sprites[index].index = name_to_index["wall"] * 4;
 			ppu.sprites[index].attributes = name_to_index["wall"];
 			ppu.sprites[index].x = it->first * tile_offset;
@@ -200,8 +205,8 @@ PlayMode::PlayMode() {
 		ppu.sprites[index].index = name_to_index["enemy"] * 4;
 		ppu.sprites[index].attributes = name_to_index["enemy"];
 	}
-	for (std::vector<std::pair<int, int> >::iterator it = level_table[0].enemies.begin(); 
-		 it != level_table[0].enemies.end(); ++it) {
+	for (std::vector<std::pair<int, int> >::iterator it = level_table[level].enemies.begin(); 
+		 it != level_table[level].enemies.end(); ++it) {
 			Tank enemy;
 			enemy.pos.x = it->first * tile_offset;
 			enemy.pos.y = it->second * tile_offset;
@@ -227,6 +232,21 @@ PlayMode::PlayMode() {
 		bullet.direction = glm::vec2(0, 0);
 		bullets.push_back(bullet);
 	}
+
+	// 6. background
+	for (size_t i = 0; i < PPU466::BackgroundWidth * PPU466::BackgroundHeight; ++i) {
+		ppu.background[i] = NULL_BACKGROUND_VALUE;
+	}
+	uint16_t background_value = (name_to_index["wall"] << 8) + name_to_index["wall"] * 4;
+	for (size_t i = 0; i < level_table[level].background.size(); ++i) {
+		int row = level_table[level].background[i].first;
+		int col = level_table[level].background[i].second;
+		ppu.background[row * PPU466::BackgroundWidth + col] = background_value;
+	}
+}
+
+PlayMode::PlayMode() {
+	initialize_level(0);
 }
 
 PlayMode::~PlayMode() {
@@ -280,21 +300,34 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 
 // decide if the given sprite collides with something else
 int PlayMode::check_collision(glm::vec2 sprite, size_t sprite_index, std::array<PPU466::Sprite, 64> *sprites, int width) {
+	// check collision with other sprites
 	for (size_t i = 0; i < BULLET_SPRITE_OFFSET; i++ ) {
-		if (sprite_index != 0) {
-			//printf("sprite: (%d, %d) b: (%.1f, %.1f)\t", (*sprites)[i].x, (*sprites)[i].y, sprite.x, sprite.y);
-			//printf("%d %d %d %d\n", (sprite.x-width) < (*sprites)[i].x , ((*sprites)[i].x) < (sprite.x+width), (sprite.y-width) < (*sprites)[i].y, (*sprites)[i].y < (sprite.y+width));
-		}
 		if (i != sprite_index &&
-			sprite.x < (*sprites)[i].x + width && 
-			((*sprites)[i].x) < (sprite.x + width) && 
-			sprite.y < (*sprites)[i].y + width && 
-			(*sprites)[i].y < (sprite.y + width)) {
+			sprite.x < (*sprites)[i].x + (width) && 
+			((*sprites)[i].x) < (sprite.x + (width)) && 
+			sprite.y < (*sprites)[i].y + (width) && 
+			(*sprites)[i].y < (sprite.y + (width))) {
 				if (sprite.x != (*sprites)[i].x && sprite.y != (*sprites)[i].y) // not the same sprite
 					return i;
 			}
 	}
-	return -1;
+
+	// check collision with background
+	int col = sprite.x / 8;
+	int row = sprite.y / 8;
+	for (int i = row; i <= row + 1; ++i) {
+		for (int j = col; j <= col + 1; ++j) {
+			if (i < 0 || j < 0) {
+				continue;
+			}
+			int index = i * PPU466::BackgroundWidth + j;
+			if (ppu.background[index] != NULL_BACKGROUND_VALUE) {
+				return -index;
+			}
+		}
+	}
+	// no collision
+	return sprite_index;
 }
 
 // return game_over
@@ -316,43 +349,64 @@ bool PlayMode::hit_by_bullet(int collision_index, Tank &player,
 		} else { // enemies
 			enemies[collision_index-ENEMY_SPRITE_OFFSET].pos.x = 255;
 			enemies[collision_index-ENEMY_SPRITE_OFFSET].pos.y = 255;
+			enemies[collision_index-ENEMY_SPRITE_OFFSET].direction.x = 0;
+			enemies[collision_index-ENEMY_SPRITE_OFFSET].direction.y = 0;
 		}
 		return false;
 	}
 }
 
-void PlayMode::move_tank(Tank &tank, size_t index, float speed, float elapsed) {
+void PlayMode::move_tank(Tank &tank, int index, float speed, float elapsed) {
 
 	tank.pos.x += speed * elapsed *tank.direction.x;
 	tank.pos.y += speed * elapsed * tank.direction.y;
 
 	// bounding to screen
 	tank.pos.x = std::fmax(0, tank.pos.x);
-	tank.pos.x = std::fmin(tank.pos.x, 255-8);
+	tank.pos.x = std::fmin(tank.pos.x, PPU466::ScreenWidth-8);
 	tank.pos.y = std::fmax(0, tank.pos.y);
-	tank.pos.y = std::fmin(tank.pos.y, 255-8);
+	tank.pos.y = std::fmin(tank.pos.y, PPU466::ScreenHeight-8);
 
 	// if the tank collide with other sprites, reset it's position to avoid collision
 	int collision_index = check_collision(tank.pos, index, &ppu.sprites, 8);
-	if (collision_index >= 0) {
-		uint8_t sp_x = ppu.sprites[collision_index].x;
-		uint8_t sp_y = ppu.sprites[collision_index].y;
-		if (tank.direction.x == 0) {
-			// if tank is going up, ignore the sprite overlap at the bottom
-			if (!(tank.direction.y == 1 && sp_y < tank.pos.y) && 
-				!(tank.direction.y == -1 && sp_y > tank.pos.y)) {
-				int diff = 8 - std::abs(tank.pos.y - sp_y);
-				tank.pos.y -= tank.direction.y * diff;
+	if (collision_index != index) {
+		uint8_t sp_x, sp_y;
+		if (collision_index > 0) { // collision with sprites
+			sp_x = ppu.sprites[collision_index].x;
+			sp_y = ppu.sprites[collision_index].y;
+
+			if (tank.direction.x == 0) {
+				tank.pos.y = sp_y - 8 * tank.direction.y;
+			} else {
+				tank.pos.x = sp_x - 8* tank.direction.x;
 			}
-				
-		} else {
-			if (!(tank.direction.x == 1 && sp_x < tank.pos.x) && 
-				!(tank.direction.x == -1 && sp_x > tank.pos.x)) {
-				int diff = 8 - std::abs(tank.pos.x - sp_x);
-				tank.pos.x -= tank.direction.x * diff;
+
+		} else { // collision with background
+			collision_index = (-collision_index);
+			sp_x = collision_index % PPU466::BackgroundWidth * 8;
+			sp_y = floor(collision_index / PPU466::BackgroundWidth) * 8;
+			// printf("detected collision at: %d -> (%d, %.1f) -> (%d, %d)\n", 
+			// 		collision_index, collision_index % PPU466::BackgroundWidth, 
+			// 		floor(collision_index / PPU466::BackgroundWidth),
+			// 		sp_x, sp_y);
+
+			if (tank.direction.x == 0) {
+				// if tank is going up, ignore the sprite overlap at the upper
+				if (!(tank.direction.y == 1 && sp_y < (tank.pos.y-8)) && 
+					!(tank.direction.y == -1 && sp_y > tank.pos.y)) {
+					int diff = 8 - std::abs(tank.pos.y - sp_y);
+					tank.pos.y -= tank.direction.y * diff;
+				}
+					
+			} else {
+				if (!(tank.direction.x == 1 && sp_x < tank.pos.x) && 
+					!(tank.direction.x == -1 && sp_x > (tank.pos.x-8))) {
+					int diff = 8 - std::abs(tank.pos.x - sp_x);
+					tank.pos.x -= tank.direction.x * diff;
+				}
 			}
-		}
-	}
+		}	
+	}	
 }
 
 void PlayMode::emit_bullet(Tank &tank) {
@@ -465,7 +519,7 @@ void PlayMode::update(float elapsed) {
 
 	// update bullets position
 	constexpr float BulletSpeed = 3.0f;
-	for (size_t i = 0; i < bullets.size(); ++i) {
+	for (int i = 0; i < int(bullets.size()); ++i) {
 		if (bullets[i].direction.x != 0 || bullets[i].direction.y != 0) {
 			bullets[i].pos.x += BulletSpeed * bullets[i].direction.x;
 			bullets[i].pos.y += BulletSpeed * bullets[i].direction.y;
@@ -475,8 +529,9 @@ void PlayMode::update(float elapsed) {
 			// check collision
 			glm::vec2 b(bullets[i].pos.x, bullets[i].pos.y);
 			int collision_index = check_collision(b, i, &ppu.sprites, 4);
-			if (collision_index >= 0) {
-				game_over = hit_by_bullet(collision_index, player, ppu.sprites, enemies);
+			if (collision_index != i) {
+				if (collision_index > 0)
+					game_over = hit_by_bullet(collision_index, player, ppu.sprites, enemies);
 				// the bullet should be disappear
 				bullets[i].direction.x = 0;
 				bullets[i].direction.y = 0;
@@ -505,7 +560,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	for (uint32_t y = 0; y < PPU466::BackgroundHeight; ++y) {
 		for (uint32_t x = 0; x < PPU466::BackgroundWidth; ++x) {
 			//TODO: make weird plasma thing
-			ppu.background[x+PPU466::BackgroundWidth*y] = 0b0000011111111111;// ((x+y)%16);
+			//ppu.background[x+PPU466::BackgroundWidth*y] = NULL_BACKGROUND_VALUE;// ((x+y)%16);
 		}
 	}
 

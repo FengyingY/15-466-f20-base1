@@ -53,6 +53,8 @@ struct PlayMode : Mode {
 	bool game_over = false;
 
 	// helper functions
+	void initialize_level(int level);
+
 	bool hit_by_bullet(int collision_index, Tank &player, 
 			std::array<PPU466::Sprite, 64> &sprites, 
 			std::vector<Tank>&enemies);
@@ -61,7 +63,7 @@ struct PlayMode : Mode {
 				        std::array<PPU466::Sprite, 64> *sprites, int width);
 
 
-	void move_tank(Tank &tank, size_t index, float speed, float elapsed);
+	void move_tank(Tank &tank, int index, float speed, float elapsed);
 
 	void emit_bullet(Tank &tank);
 };
