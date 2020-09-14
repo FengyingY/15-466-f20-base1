@@ -6,7 +6,8 @@
 ".level" files:
     32 * 30 matrix, indicate the initial position of the sprtes for this level
     b - basement
-    w - wall 
+    w - wall (destroyable)
+    o - wall (as background, not destroyable)
     p - player 
     e - enermies
-    0 - background
+    n - background
