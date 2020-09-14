@@ -52,10 +52,16 @@ struct PlayMode : Mode {
 
 	bool game_over = false;
 
-	bool hit_by_bullet(int collision_index, struct Tank &player, 
+	// helper functions
+	bool hit_by_bullet(int collision_index, Tank &player, 
 			std::array<PPU466::Sprite, 64> &sprites, 
-			std::vector<struct Tank>&enemies);
+			std::vector<Tank>&enemies);
 
 	int check_collision(glm::vec2 sprite, size_t sprite_index, 
 				        std::array<PPU466::Sprite, 64> *sprites, int width);
+
+
+	void move_tank(Tank &tank, size_t index, float speed, float elapsed);
+
+	void emit_bullet(Tank &tank);
 };

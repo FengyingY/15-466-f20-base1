@@ -205,7 +205,16 @@ PlayMode::PlayMode() {
 			Tank enemy;
 			enemy.pos.x = it->first * tile_offset;
 			enemy.pos.y = it->second * tile_offset;
-			enemy.direction = glm::vec2(0, 0);
+			int randint = rand() % 4;
+			if (randint == 0) { // up
+				enemy.direction = glm::vec2(0, 1);
+			} else if (randint == 1) { // right
+				enemy.direction = glm::vec2(1, 0);
+			} else if (randint == 1) { // down
+				enemy.direction = glm::vec2(0, -1);
+			} else { // left
+				enemy.direction = glm::vec2(-1, 0);
+			}
 			enemies.push_back(enemy);
 	}
 
@@ -312,63 +321,97 @@ bool PlayMode::hit_by_bullet(int collision_index, Tank &player,
 	}
 }
 
-void PlayMode::update(float elapsed) {
+void PlayMode::move_tank(Tank &tank, size_t index, float speed, float elapsed) {
 
-	constexpr float PlayerSpeed = 30.0f;
-	if (left.pressed) {
-		player.pos.x -= PlayerSpeed * elapsed;
-		player.direction.x = -1;
-		player.direction.y = 0;
-		ppu.sprites[0].index = name_to_index["player"] + 3;
-	} 
-	else if (right.pressed) {
-		player.pos.x += PlayerSpeed * elapsed;
-		player.direction.x = 1;
-		player.direction.y = 0;
-		ppu.sprites[0].index = name_to_index["player"] + 1;
-	}
-	else if (down.pressed) {
-		player.pos.y -= PlayerSpeed * elapsed;
-		player.direction.x = 0;
-		player.direction.y = -1;
-		ppu.sprites[0].index = name_to_index["player"] + 2;
-	}
-	else if (up.pressed) {
-		player.pos.y += PlayerSpeed * elapsed;
-		player.direction.x = 0;
-		player.direction.y = 1;
-		ppu.sprites[0].index = name_to_index["player"];
-	}
+	tank.pos.x += speed * elapsed *tank.direction.x;
+	tank.pos.y += speed * elapsed * tank.direction.y;
 
 	// bounding to screen
-	player.pos.x = std::fmax(0, player.pos.x);
-	player.pos.x = std::fmin(player.pos.x, 255-8);
-	player.pos.y = std::fmax(0, player.pos.y);
-	player.pos.y = std::fmin(player.pos.y, 255-8);
+	tank.pos.x = std::fmax(0, tank.pos.x);
+	tank.pos.x = std::fmin(tank.pos.x, 255-8);
+	tank.pos.y = std::fmax(0, tank.pos.y);
+	tank.pos.y = std::fmin(tank.pos.y, 255-8);
 
-	// if the player collide with other sprites, reset it's position to avoid collision
-	int collision_index = check_collision(player.pos, 0, &ppu.sprites, 8);
-	if (collision_index > 0) {
+	// if the tank collide with other sprites, reset it's position to avoid collision
+	int collision_index = check_collision(tank.pos, index, &ppu.sprites, 8);
+	if (collision_index >= 0) {
 		uint8_t sp_x = ppu.sprites[collision_index].x;
 		uint8_t sp_y = ppu.sprites[collision_index].y;
-		if (player.direction.x == 0) {
-			// if player is going up, ignore the sprite overlap at the bottom
-			if (!(player.direction.y == 1 && sp_y < player.pos.y) && 
-				!(player.direction.y == -1 && sp_y > player.pos.y)) {
-				int diff = 8 - std::abs(player.pos.y - sp_y);
-				player.pos.y -= player.direction.y * diff;
+		if (tank.direction.x == 0) {
+			// if tank is going up, ignore the sprite overlap at the bottom
+			if (!(tank.direction.y == 1 && sp_y < tank.pos.y) && 
+				!(tank.direction.y == -1 && sp_y > tank.pos.y)) {
+				int diff = 8 - std::abs(tank.pos.y - sp_y);
+				tank.pos.y -= tank.direction.y * diff;
 			}
 				
 		} else {
-			if (!(player.direction.x == 1 && sp_x < player.pos.x) && 
-				!(player.direction.x == -1 && sp_x > player.pos.x)) {
-				int diff = 8 - std::abs(player.pos.x - sp_x);
-				player.pos.x -= player.direction.x * diff;
+			if (!(tank.direction.x == 1 && sp_x < tank.pos.x) && 
+				!(tank.direction.x == -1 && sp_x > tank.pos.x)) {
+				int diff = 8 - std::abs(tank.pos.x - sp_x);
+				tank.pos.x -= tank.direction.x * diff;
 			}
 		}
 	}
+}
 
-	// emit a bullet when space is pressed
+void PlayMode::emit_bullet(Tank &tank) {
+	// 1. find the next available bullet sprite
+	size_t index;
+	for (index = 0; index < bullets.size(); ++index) {
+		if (bullets[index].direction.x == 0 && bullets[index].direction.y == 0) {
+			break;
+		}
+	}
+	// 2. emit the bullet
+	bullets[index].direction.x = tank.direction.x;
+	bullets[index].direction.y = tank.direction.y;
+	if (tank.direction.x == 0) {
+		if (tank.direction.y == 1) // up
+			ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4;
+		else // down
+			ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 2;
+	} else if (tank.direction.x == 1) { // right
+		ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 1;
+	} else { // left
+		ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 3;
+	}
+
+	bullets[index].pos.x = tank.pos.x;
+	bullets[index].pos.y = tank.pos.y;
+	space.pressed = false;
+}
+
+void PlayMode::update(float elapsed) {
+	// 1. player's move
+	constexpr float PlayerSpeed = 30.0f;
+	if (left.pressed) {
+		player.direction.x = -1;
+		player.direction.y = 0;
+		ppu.sprites[0].index = name_to_index["player"] + 3;
+		move_tank(player, 0, PlayerSpeed, elapsed);
+	} 
+	else if (right.pressed) {
+		player.direction.x = 1;
+		player.direction.y = 0;
+		ppu.sprites[0].index = name_to_index["player"] + 1;
+		move_tank(player, 0, PlayerSpeed, elapsed);
+	}
+	else if (down.pressed) {
+		player.direction.x = 0;
+		player.direction.y = -1;
+		ppu.sprites[0].index = name_to_index["player"] + 2;
+		move_tank(player, 0, PlayerSpeed, elapsed);
+	}
+	else if (up.pressed) {
+		player.direction.x = 0;
+		player.direction.y = 1;
+		ppu.sprites[0].index = name_to_index["player"];
+		move_tank(player, 0, PlayerSpeed, elapsed);
+	}
+
+
+	// 2. emit a bullet when space is pressed
 	if (space.pressed) {
 		// 1. find the next available bullet sprite
 		size_t index;
@@ -378,23 +421,47 @@ void PlayMode::update(float elapsed) {
 			}
 		}
 		// 2. emit the bullet
-		bullets[index].direction.x = player.direction.x;
-		bullets[index].direction.y = player.direction.y;
-		if (player.direction.x == 0) {
-			if (player.direction.y == 1) // up
-				ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4;
-			else // down
-				ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 2;
-		} else if (player.direction.x == 1) { // right
-			ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 1;
-		} else { // left
-			ppu.sprites[BULLET_SPRITE_OFFSET + index].index = name_to_index["bullet"] * 4 + 3;
-		}
-
-		bullets[index].pos.x = player.pos.x;
-		bullets[index].pos.y = player.pos.y;
+		emit_bullet(player);
 		space.pressed = false;
 	}
+
+
+	// 3. enemies -> change the direction randomly
+	for (size_t i = 0; i < enemies.size(); ++i) {
+		if (enemies[i].direction.x == 0 && enemies[i].direction.y == 0) // ignore `dead` enemies
+			continue;
+		int randint = rand() % 20;
+		if (randint == 1) {
+			// change the direction
+			randint = rand() % 4;
+			if (randint == 0) { // up
+				enemies[i].direction.x = 0;
+				enemies[i].direction.y = 1;
+				ppu.sprites[i+ENEMY_SPRITE_OFFSET].index = name_to_index["enemy"]*4;
+			} else if (randint == 1) { // right
+				enemies[i].direction.x = 1;
+				enemies[i].direction.y = 0;
+				ppu.sprites[i+ENEMY_SPRITE_OFFSET].index = name_to_index["enemy"]*4 + 1;
+			} else if (randint == 1) { // down
+				enemies[i].direction.x = 0;
+				enemies[i].direction.y = -1;
+				ppu.sprites[i+ENEMY_SPRITE_OFFSET].index = name_to_index["enemy"]*4 + 2;
+			} else { // left
+				enemies[i].direction.x = -1;
+				enemies[i].direction.y = 0;
+				ppu.sprites[i+ENEMY_SPRITE_OFFSET].index = name_to_index["enemy"]*4 + 3;
+			}
+		}
+
+		// hit randomly
+		randint = rand() % 1000;
+		if (randint == 1) {
+			emit_bullet(enemies[i]);
+		}
+		// let it move!
+		move_tank(enemies[i], i+ENEMY_SPRITE_OFFSET, PlayerSpeed, elapsed);
+	}
+
 
 	// update bullets position
 	constexpr float BulletSpeed = 3.0f;
@@ -418,7 +485,6 @@ void PlayMode::update(float elapsed) {
 			}
 		}
 	}
-	
 
 	//reset button press counters:
 	left.downs = 0;
